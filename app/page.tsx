@@ -260,7 +260,7 @@ export default function Page() {
                       <Button
                         size="icon"
                         variant="ghost"
-                        className="ml-auto size-8 rounded-full text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
+                        className="ml-auto size-8 rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                         onClick={() => handleDeletePost(post._id)}
                       >
                         <Trash2 className="size-4" />
