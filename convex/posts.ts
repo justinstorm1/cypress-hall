@@ -12,8 +12,12 @@ export const createPost = mutation({
         const userId = await getAuthUserId(ctx);
         if (!userId) throw new Error("User not authenticated");
 
+        const email = (await ctx.db.get(userId))!.email;
+        if (!email) throw new Error("User email not found");
+
         await ctx.db.insert("posts", {
             userId,
+            email,
             subject,
             body,
             likes: 0
@@ -30,7 +34,15 @@ export const getPosts = query({
 
         const userId = await getAuthUserId(ctx);
         if (!userId) {
-            return posts.map((post) => ({ ...post, likedByMe: false }));
+            return posts.map((post) => ({
+                _id: post._id,
+                _creationTime: post._creationTime,
+                subject: post.subject,
+                body: post.body,
+                likes: post.likes,
+                likedByMe: false,
+                isMine: false,
+            }));
         }
 
         const myLikes = await ctx.db
@@ -40,9 +52,34 @@ export const getPosts = query({
         const likedPostIds = new Set(myLikes.map((like) => like.postId));
 
         return posts.map((post) => ({
-            ...post,
+            _id: post._id,
+            _creationTime: post._creationTime,
+            subject: post.subject,
+            body: post.body,
+            likes: post.likes,
             likedByMe: likedPostIds.has(post._id),
+            isMine: post.userId === userId,
         }));
+    }
+})
+
+export const deletePost = mutation({
+    args: { postId: v.id("posts") },
+    handler: async (ctx, { postId }) => {
+        const userId = await getAuthUserId(ctx);
+        if (!userId) throw new Error("User not authenticated");
+
+        const post = await ctx.db.get(postId);
+        if (!post) throw new Error("Post not found");
+        if (post.userId !== userId) throw new Error("You can only delete your own posts");
+
+        const postLikes = await ctx.db
+            .query("likes")
+            .withIndex("by_post", (q) => q.eq("postId", postId))
+            .collect();
+        await Promise.all(postLikes.map((like) => ctx.db.delete(like._id)));
+
+        await ctx.db.delete(postId);
     }
 })
 

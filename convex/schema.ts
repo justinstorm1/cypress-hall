@@ -6,6 +6,7 @@ export default defineSchema({
     ...authTables,
     posts: defineTable({
         userId: v.id("users"),
+        email: v.string(),
         subject: v.string(),
         body: v.string(),
         likes: v.number(),
@@ -14,7 +15,8 @@ export default defineSchema({
         userId: v.id("users"),
         postId: v.id("posts"),
     })
-    .index("by_user_post", ["userId", "postId"]),
+    .index("by_user_post", ["userId", "postId"])
+    .index("by_post", ["postId"]),
     replies: defineTable({
         userId: v.id("users"),
         postId: v.id("posts"),
