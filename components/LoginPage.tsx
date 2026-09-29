@@ -55,7 +55,7 @@ export default function LoginPage() {
           </div>
           <CardTitle className="text-xl">Welcome to Cypresshall</CardTitle>
           <CardDescription>
-            Anonymous posting, only for NJIT students.
+            The message board for NJIT students.
           </CardDescription>
         </CardHeader>
 
@@ -77,8 +77,8 @@ export default function LoginPage() {
         </CardContent>
 
         <CardFooter className="justify-center bg-transparent p-4 text-center text-xs text-muted-foreground">
-          Posts are anonymous to other students. Your NJIT identity is only
-          ever used to verify enrollment.
+          Post as yourself or anonymously. Anonymous posts never show your
+          name or UCID to other students.
         </CardFooter>
       </Card>
     </div>

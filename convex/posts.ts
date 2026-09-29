@@ -1,104 +1,128 @@
-import { v } from 'convex/values';
-import { mutation, query } from './_generated/server';
-import { getAuthUserId } from '@convex-dev/auth/server';
+import { ConvexError, v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import { mutation, query, QueryCtx } from "./_generated/server";
+import { Id } from "./_generated/dataModel";
+import { createAuthorLoader } from "./authors";
+import { MAX_BODY_LENGTH, MAX_SUBJECT_LENGTH } from "./limits";
+
+const FEED_SIZE = 100;
 
 export const createPost = mutation({
     args: {
         subject: v.string(),
         body: v.string(),
-        likes: v.number(),
+        anonymous: v.boolean(),
     },
-    handler: async (ctx, { subject, body, likes }) => {
+    handler: async (ctx, args) => {
         const userId = await getAuthUserId(ctx);
-        if (!userId) throw new Error("User not authenticated");
+        if (!userId) throw new ConvexError("You need to be signed in to post.");
 
-        const email = (await ctx.db.get(userId))!.email;
-        if (!email) throw new Error("User email not found");
+        const user = await ctx.db.get("users", userId);
+        if (!user?.email) throw new ConvexError("Your account has no email on file.");
+
+        const subject = args.subject.trim();
+        const body = args.body.trim();
+        if (!body) throw new ConvexError("Posts can't be empty.");
+        if (subject.length > MAX_SUBJECT_LENGTH) {
+            throw new ConvexError(`Titles are limited to ${MAX_SUBJECT_LENGTH} characters.`);
+        }
+        if (body.length > MAX_BODY_LENGTH) {
+            throw new ConvexError(`Posts are limited to ${MAX_BODY_LENGTH} characters.`);
+        }
 
         await ctx.db.insert("posts", {
             userId,
-            email,
+            email: user.email,
+            anonymous: args.anonymous,
             subject,
             body,
-            likes: 0
-        })
-    }
+            likes: 0,
+            replyCount: 0,
+        });
+        return null;
+    },
 });
 
-export const getPosts = query({
-    handler: async (ctx) => {
-        const posts = await ctx.db
-            .query("posts")
-            .order("desc")
-            .collect();
+async function isLikedBy(ctx: QueryCtx, userId: Id<"users">, postId: Id<"posts">) {
+    const like = await ctx.db
+        .query("likes")
+        .withIndex("by_userId_and_postId", (q) => q.eq("userId", userId).eq("postId", postId))
+        .unique();
+    return like !== null;
+}
 
-        const userId = await getAuthUserId(ctx);
-        if (!userId) {
-            return posts.map((post) => ({
+export const getPosts = query({
+    args: {},
+    handler: async (ctx) => {
+        const viewerId = await getAuthUserId(ctx);
+        if (!viewerId) return [];
+
+        const posts = await ctx.db.query("posts").order("desc").take(FEED_SIZE);
+        const loadAuthor = createAuthorLoader(ctx);
+
+        return await Promise.all(
+            posts.map(async (post) => ({
                 _id: post._id,
                 _creationTime: post._creationTime,
                 subject: post.subject,
                 body: post.body,
                 likes: post.likes,
-                likedByMe: false,
-                isMine: false,
-            }));
-        }
-
-        const myLikes = await ctx.db
-            .query("likes")
-            .withIndex("by_user_post", (q) => q.eq("userId", userId))
-            .collect();
-        const likedPostIds = new Set(myLikes.map((like) => like.postId));
-
-        return posts.map((post) => ({
-            _id: post._id,
-            _creationTime: post._creationTime,
-            subject: post.subject,
-            body: post.body,
-            likes: post.likes,
-            likedByMe: likedPostIds.has(post._id),
-            isMine: post.userId === userId,
-        }));
-    }
-})
+                replyCount: post.replyCount,
+                anonymous: post.anonymous,
+                author: await loadAuthor(post),
+                isMine: post.userId === viewerId,
+                likedByMe: await isLikedBy(ctx, viewerId, post._id),
+            })),
+        );
+    },
+});
 
 export const deletePost = mutation({
     args: { postId: v.id("posts") },
     handler: async (ctx, { postId }) => {
         const userId = await getAuthUserId(ctx);
-        if (!userId) throw new Error("User not authenticated");
+        if (!userId) throw new ConvexError("You need to be signed in.");
 
-        const post = await ctx.db.get(postId);
-        if (!post) throw new Error("Post not found");
-        if (post.userId !== userId) throw new Error("You can only delete your own posts");
+        const post = await ctx.db.get("posts", postId);
+        if (!post) throw new ConvexError("That post no longer exists.");
+        if (post.userId !== userId) throw new ConvexError("You can only delete your own posts.");
 
-        const postLikes = await ctx.db
+        for await (const like of ctx.db
             .query("likes")
-            .withIndex("by_post", (q) => q.eq("postId", postId))
-            .collect();
-        await Promise.all(postLikes.map((like) => ctx.db.delete(like._id)));
-
-        await ctx.db.delete(postId);
-    }
-})
+            .withIndex("by_postId", (q) => q.eq("postId", postId))) {
+            await ctx.db.delete("likes", like._id);
+        }
+        for await (const reply of ctx.db
+            .query("replies")
+            .withIndex("by_postId", (q) => q.eq("postId", postId))) {
+            await ctx.db.delete("replies", reply._id);
+        }
+        await ctx.db.delete("posts", postId);
+        return null;
+    },
+});
 
 export const toggleLikePost = mutation({
     args: { postId: v.id("posts") },
     handler: async (ctx, { postId }) => {
         const userId = await getAuthUserId(ctx);
-        if (!userId) throw new Error("User not authenticated");
+        if (!userId) throw new ConvexError("You need to be signed in.");
 
-        const like = await ctx.db.query("likes").withIndex("by_user_post", (q) =>
-            q.eq("userId", userId).eq("postId", postId)
-        ).collect();
+        const post = await ctx.db.get("posts", postId);
+        if (!post) throw new ConvexError("That post no longer exists.");
 
-        if (like.length > 0) {
-            await ctx.db.delete(like[0]._id);
-            await ctx.db.patch(postId, { likes: (await ctx.db.get(postId))!.likes - 1 });
+        const existing = await ctx.db
+            .query("likes")
+            .withIndex("by_userId_and_postId", (q) => q.eq("userId", userId).eq("postId", postId))
+            .unique();
+
+        if (existing) {
+            await ctx.db.delete("likes", existing._id);
+            await ctx.db.patch("posts", postId, { likes: Math.max(0, post.likes - 1) });
         } else {
             await ctx.db.insert("likes", { userId, postId });
-            await ctx.db.patch(postId, { likes: (await ctx.db.get(postId))!.likes + 1 });
+            await ctx.db.patch("posts", postId, { likes: post.likes + 1 });
         }
-    }
-})
+        return null;
+    },
+});

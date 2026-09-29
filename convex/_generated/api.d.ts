@@ -9,8 +9,12 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as authors from "../authors.js";
 import type * as http from "../http.js";
+import type * as limits from "../limits.js";
 import type * as posts from "../posts.js";
+import type * as replies from "../replies.js";
+import type * as users from "../users.js";
 
 import type {
   ApiFromModules,
@@ -20,8 +24,12 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  authors: typeof authors;
   http: typeof http;
+  limits: typeof limits;
   posts: typeof posts;
+  replies: typeof replies;
+  users: typeof users;
 }>;
 
 /**
